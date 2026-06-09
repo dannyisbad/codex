@@ -959,6 +959,15 @@ fn sanitize_base_url(raw: &str) -> Option<String> {
     let Ok(mut url) = Url::parse(trimmed) else {
         return None;
     };
+    // A loopback base URL (e.g. a local bridge like cyrus on 127.0.0.1) is noise
+    // in the status line — the user gains nothing from seeing the port. Suppress
+    // it so the provider renders by name alone; keep URLs for real remotes.
+    if matches!(
+        url.host_str(),
+        Some("127.0.0.1") | Some("localhost") | Some("::1") | Some("[::1]")
+    ) {
+        return None;
+    }
     let _ = url.set_username("");
     let _ = url.set_password(None);
     url.set_query(None);

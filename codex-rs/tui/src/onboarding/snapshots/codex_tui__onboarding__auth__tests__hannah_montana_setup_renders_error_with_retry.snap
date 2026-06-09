@@ -1,0 +1,17 @@
+---
+source: tui/src/onboarding/auth.rs
+assertion_line: 1478
+expression: terminal.backend()
+---
+  Setting up Hannah Montana mode
+
+  ✓ Loading secrets — loaded
+  ⏳ Connecting Chrome
+    Opening tunnel
+    Starting stack
+    Wiring the ChatGPT connector
+    Writing Codex config
+
+  Failed to launch cyrus: program not found
+
+  Press enter to retry

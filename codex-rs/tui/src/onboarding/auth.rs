@@ -1098,6 +1098,8 @@ pub(super) fn maybe_open_auth_url_in_browser(request_handle: &AppServerRequestHa
 mod tests {
     use super::*;
     use crate::legacy_core::config::ConfigBuilder;
+    use crate::test_backend::VT100Backend;
+    use ratatui::Terminal;
     use codex_app_server_client::AppServerRequestHandle;
     use codex_app_server_client::DEFAULT_IN_PROCESS_CHANNEL_CAPACITY;
     use codex_app_server_client::InProcessAppServerClient;
@@ -1399,5 +1401,94 @@ mod tests {
             !sym.contains("\x1B]8;;\x07injected"),
             "symbol must not contain raw control chars from URL"
         );
+    }
+
+    fn hannah_montana_state(events: &[&str]) -> HannahMontanaSetupState {
+        let mut state = HannahMontanaSetupState::new("attempt-render".to_string());
+        for line in events {
+            hannah_montana_setup::reduce(
+                &mut state,
+                serde_json::from_str(line).expect("event should parse"),
+            );
+        }
+        state
+    }
+
+    fn render_hannah_montana_snapshot(
+        widget: &AuthModeWidget,
+        state: &HannahMontanaSetupState,
+        height: u16,
+    ) -> Terminal<VT100Backend> {
+        let mut terminal =
+            Terminal::new(VT100Backend::new(/*width*/ 70, height)).expect("terminal");
+        terminal
+            .draw(|f| {
+                hannah_montana_setup::render_hannah_montana_setup(
+                    widget,
+                    f.area(),
+                    f.buffer_mut(),
+                    state,
+                )
+            })
+            .expect("draw");
+        terminal
+    }
+
+    #[tokio::test]
+    async fn hannah_montana_setup_renders_mid_run() {
+        let (widget, _tmp) = widget_forced_chatgpt().await;
+        let state = hannah_montana_state(&[
+            r#"{"event":"step_started","step":"secrets","label":"Loading secrets"}"#,
+            r#"{"event":"step_done","step":"secrets","detail":"loaded"}"#,
+            r#"{"event":"step_started","step":"chrome","label":"Connecting Chrome"}"#,
+        ]);
+
+        let terminal = render_hannah_montana_snapshot(&widget, &state, /*height*/ 12);
+
+        insta::assert_snapshot!(terminal.backend());
+    }
+
+    #[tokio::test]
+    async fn hannah_montana_setup_renders_action_needed() {
+        let (widget, _tmp) = widget_forced_chatgpt().await;
+        let state = hannah_montana_state(&[
+            r#"{"event":"step_started","step":"secrets","label":"Loading secrets"}"#,
+            r#"{"event":"step_done","step":"secrets","detail":"loaded"}"#,
+            r#"{"event":"step_started","step":"chrome","label":"Connecting Chrome"}"#,
+            r#"{"event":"needs_user_action","step":"chrome","instruction":"log in to ChatGPT in the Chrome window"}"#,
+        ]);
+
+        let terminal = render_hannah_montana_snapshot(&widget, &state, /*height*/ 14);
+
+        insta::assert_snapshot!(terminal.backend());
+    }
+
+    #[tokio::test]
+    async fn hannah_montana_setup_renders_error_with_retry() {
+        let (widget, _tmp) = widget_forced_chatgpt().await;
+        let state = hannah_montana_state(&[
+            r#"{"event":"step_started","step":"secrets","label":"Loading secrets"}"#,
+            r#"{"event":"step_done","step":"secrets","detail":"loaded"}"#,
+            r#"{"event":"step_started","step":"chrome","label":"Connecting Chrome"}"#,
+            r#"{"event":"error","message":"Failed to launch cyrus: program not found"}"#,
+        ]);
+
+        let terminal = render_hannah_montana_snapshot(&widget, &state, /*height*/ 16);
+
+        insta::assert_snapshot!(terminal.backend());
+    }
+
+    #[tokio::test]
+    async fn hannah_montana_configured_renders() {
+        let (mut widget, _tmp) = widget_forced_chatgpt().await;
+        widget.hannah_montana_provider = Some("shadow".to_string());
+
+        let mut terminal =
+            Terminal::new(VT100Backend::new(/*width*/ 70, /*height*/ 10)).expect("terminal");
+        terminal
+            .draw(|f| widget.render_hannah_montana_configured(f.area(), f.buffer_mut()))
+            .expect("draw");
+
+        insta::assert_snapshot!(terminal.backend());
     }
 }

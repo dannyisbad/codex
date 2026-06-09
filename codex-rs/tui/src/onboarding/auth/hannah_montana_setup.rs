@@ -71,7 +71,7 @@ pub(crate) struct HannahMontanaSetupState {
 }
 
 impl HannahMontanaSetupState {
-    fn new(attempt_id: String) -> Self {
+    pub(crate) fn new(attempt_id: String) -> Self {
         let steps = SETUP_STEPS
             .iter()
             .map(|(key, label)| SetupStep {

@@ -1,0 +1,9 @@
+---
+source: tui/src/onboarding/auth.rs
+assertion_line: 1492
+expression: terminal.backend()
+---
+✓ Hannah Montana mode
+
+  Best of both worlds - using the shadow provider. No sign-in, no
+limits.

@@ -1,0 +1,15 @@
+---
+source: tui/src/onboarding/auth.rs
+assertion_line: 1463
+expression: terminal.backend()
+---
+  Setting up Hannah Montana mode
+
+  ✓ Loading secrets — loaded
+  ⏳ Connecting Chrome
+    Opening tunnel
+    Starting stack
+    Wiring the ChatGPT connector
+    Writing Codex config
+
+  Action needed: log in to ChatGPT in the Chrome window
