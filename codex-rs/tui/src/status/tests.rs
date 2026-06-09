@@ -1708,6 +1708,71 @@ async fn status_snapshot_shows_unavailable_limits_message() {
 }
 
 #[tokio::test]
+async fn status_snapshot_no_auth_provider_shows_limits_disabled() {
+    let temp_home = TempDir::new().expect("temp home");
+    let mut config = test_config(&temp_home).await;
+    config.model = Some("gpt-5.1-codex-max".to_string());
+    set_workspace_cwd(&mut config, test_path_buf("/workspace/tests").abs());
+    config.model_provider_id = "shadow".to_string();
+    config.model_provider = ModelProviderInfo {
+        name: "shadow".to_string(),
+        base_url: Some("http://127.0.0.1:8765/v1".to_string()),
+        requires_openai_auth: false,
+        ..ModelProviderInfo::default()
+    };
+
+    let usage = TokenUsage {
+        input_tokens: 500,
+        cached_input_tokens: 0,
+        output_tokens: 250,
+        reasoning_output_tokens: 0,
+        total_tokens: 750,
+    };
+
+    let snapshot = RateLimitSnapshot {
+        limit_id: None,
+        limit_name: None,
+        primary: None,
+        secondary: None,
+        credits: None,
+        individual_limit: None,
+        plan_type: None,
+        rate_limit_reached_type: None,
+    };
+    let captured_at = chrono::Local
+        .with_ymd_and_hms(2024, 6, 7, 8, 9, 10)
+        .single()
+        .expect("timestamp");
+    let rate_display = rate_limit_snapshot_display(&snapshot, captured_at);
+
+    let model_slug = crate::legacy_core::test_support::get_model_offline(config.model.as_deref());
+    let token_info = token_info_for(&model_slug, &config, &usage);
+    let composite = new_status_output(
+        &config,
+        /*account_display*/ None,
+        Some(&token_info),
+        &usage,
+        &None,
+        /*thread_name*/ None,
+        /*forked_from*/ None,
+        Some(&rate_display),
+        None,
+        captured_at,
+        &model_slug,
+        /*collaboration_mode*/ None,
+        /*reasoning_effort_override*/ None,
+    );
+    let mut rendered_lines = render_lines(&composite.display_lines(/*width*/ 80));
+    if cfg!(windows) {
+        for line in &mut rendered_lines {
+            *line = line.replace('\\', "/");
+        }
+    }
+    let sanitized = sanitize_directory(rendered_lines).join("\n");
+    assert_snapshot!(sanitized);
+}
+
+#[tokio::test]
 async fn status_snapshot_treats_refreshing_empty_limits_as_unavailable() {
     let temp_home = TempDir::new().expect("temp home");
     let mut config = test_config(&temp_home).await;

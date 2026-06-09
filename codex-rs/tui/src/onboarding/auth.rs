@@ -40,6 +40,7 @@ use ratatui::widgets::Wrap;
 
 use codex_protocol::config_types::ForcedLoginMethod;
 use std::cell::Cell;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::RwLock;
 use uuid::Uuid;
@@ -72,7 +73,11 @@ pub(crate) fn mark_underlined_hyperlink(buf: &mut Buffer, area: Rect, url: &str)
 
 use super::onboarding_screen::StepState;
 
+mod hannah_montana_setup;
 mod headless_chatgpt_login;
+
+pub(crate) use hannah_montana_setup::HannahMontanaSetupState;
+pub(crate) use hannah_montana_setup::locate_cyrus_bin;
 
 #[derive(Clone)]
 pub(crate) enum SignInState {
@@ -84,6 +89,10 @@ pub(crate) enum SignInState {
     ChatGptSuccess,
     ApiKeyEntry(ApiKeyInputState),
     ApiKeyConfigured,
+    /// A `cyrus setup` run is in flight (or has failed and awaits retry); the
+    /// inner state holds live step progress.
+    HannahMontanaSetup(HannahMontanaSetupState),
+    HannahMontanaConfigured,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -91,6 +100,7 @@ pub(crate) enum SignInOption {
     ChatGpt,
     DeviceCode,
     ApiKey,
+    HannahMontana,
 }
 
 const API_KEY_DISABLED_MESSAGE: &str = "API key login is disabled.";
@@ -198,6 +208,10 @@ impl KeyboardHandler for AuthModeWidget {
             self.select_option_by_index(/*index*/ 2);
             return;
         }
+        if keys::SELECT_FOURTH.is_pressed(key_event) {
+            self.select_option_by_index(/*index*/ 3);
+            return;
+        }
         if keys::CONFIRM.is_pressed(key_event) {
             let sign_in_state = { (*self.sign_in_state.read().unwrap()).clone() };
             match sign_in_state {
@@ -206,6 +220,10 @@ impl KeyboardHandler for AuthModeWidget {
                 }
                 SignInState::ChatGptSuccessMessage => {
                     *self.sign_in_state.write().unwrap() = SignInState::ChatGptSuccess;
+                }
+                // Enter restarts a failed Hannah Montana setup run.
+                SignInState::HannahMontanaSetup(state) if state.error.is_some() => {
+                    self.start_hannah_montana_setup();
                 }
                 _ => {}
             }
@@ -232,6 +250,12 @@ pub(crate) struct AuthModeWidget {
     pub login_status: LoginStatus,
     pub app_server_request_handle: AppServerRequestHandle,
     pub forced_login_method: Option<ForcedLoginMethod>,
+    /// Provider id to switch to when the user picks Hannah Montana mode.
+    /// `None` hides the option (the blended provider is not configured).
+    pub hannah_montana_provider: Option<String>,
+    /// Codex working directory, passed to `cyrus setup --repo` for Hannah
+    /// Montana mode.
+    pub cwd: PathBuf,
     pub animations_enabled: bool,
     pub animations_suppressed: Cell<bool>,
 }
@@ -320,6 +344,9 @@ impl AuthModeWidget {
         if self.is_api_login_allowed() {
             options.push(SignInOption::ApiKey);
         }
+        if self.hannah_montana_provider.is_some() {
+            options.push(SignInOption::HannahMontana);
+        }
         options
     }
 
@@ -331,6 +358,9 @@ impl AuthModeWidget {
         }
         if self.is_api_login_allowed() {
             options.push(SignInOption::ApiKey);
+        }
+        if self.hannah_montana_provider.is_some() {
+            options.push(SignInOption::HannahMontana);
         }
         options
     }
@@ -376,6 +406,30 @@ impl AuthModeWidget {
                     self.disallow_api_login();
                 }
             }
+            SignInOption::HannahMontana => {
+                if self.hannah_montana_provider.is_some() {
+                    self.set_error(/*message*/ None);
+                    self.start_hannah_montana_setup();
+                }
+            }
+        }
+    }
+
+    fn start_hannah_montana_setup(&self) {
+        hannah_montana_setup::start_hannah_montana_setup(self);
+    }
+
+    /// Returns the blended provider id when the user completed sign-in by
+    /// picking Hannah Montana mode.
+    pub(crate) fn selected_hannah_montana_provider(&self) -> Option<String> {
+        let configured = self
+            .sign_in_state
+            .read()
+            .is_ok_and(|guard| matches!(&*guard, SignInState::HannahMontanaConfigured));
+        if configured {
+            self.hannah_montana_provider.clone()
+        } else {
+            None
         }
     }
 
@@ -459,6 +513,14 @@ impl AuthModeWidget {
                         option,
                         "Provide your own API key",
                         "Pay for what you use",
+                    ));
+                }
+                SignInOption::HannahMontana => {
+                    lines.extend(create_mode_item(
+                        idx,
+                        option,
+                        "Hannah Montana (best of both worlds)",
+                        "Blended provider - no sign-in, no limits",
                     ));
                 }
             }
@@ -607,6 +669,26 @@ impl AuthModeWidget {
             "✓ API key configured".fg(Color::Green).into(),
             "".into(),
             "  Codex will use usage-based billing with your API key.".into(),
+        ];
+
+        Paragraph::new(lines)
+            .wrap(Wrap { trim: false })
+            .render(area, buf);
+    }
+
+    fn render_hannah_montana_configured(&self, area: Rect, buf: &mut Buffer) {
+        let provider = self
+            .hannah_montana_provider
+            .clone()
+            .unwrap_or_else(|| "blended".to_string());
+        let lines = vec![
+            "✓ Hannah Montana mode".fg(Color::Green).into(),
+            "".into(),
+            Line::from(vec![
+                "  Best of both worlds - using the ".into(),
+                provider.cyan(),
+                " provider. No sign-in, no limits.".into(),
+            ]),
         ];
 
         Paragraph::new(lines)
@@ -958,8 +1040,11 @@ impl StepStateProvider for AuthModeWidget {
             | SignInState::ApiKeyEntry(_)
             | SignInState::ChatGptContinueInBrowser(_)
             | SignInState::ChatGptDeviceCode(_)
+            | SignInState::HannahMontanaSetup(_)
             | SignInState::ChatGptSuccessMessage => StepState::InProgress,
-            SignInState::ChatGptSuccess | SignInState::ApiKeyConfigured => StepState::Complete,
+            SignInState::ChatGptSuccess
+            | SignInState::ApiKeyConfigured
+            | SignInState::HannahMontanaConfigured => StepState::Complete,
         }
     }
 }
@@ -988,6 +1073,12 @@ impl WidgetRef for AuthModeWidget {
             }
             SignInState::ApiKeyConfigured => {
                 self.render_api_key_configured(area, buf);
+            }
+            SignInState::HannahMontanaSetup(state) => {
+                hannah_montana_setup::render_hannah_montana_setup(self, area, buf, state);
+            }
+            SignInState::HannahMontanaConfigured => {
+                self.render_hannah_montana_configured(area, buf);
             }
         }
     }
@@ -1066,6 +1157,8 @@ mod tests {
             login_status: LoginStatus::NotAuthenticated,
             app_server_request_handle: AppServerRequestHandle::InProcess(client.request_handle()),
             forced_login_method: Some(ForcedLoginMethod::Chatgpt),
+            hannah_montana_provider: None,
+            cwd: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
             animations_enabled: true,
             animations_suppressed: std::cell::Cell::new(false),
         };

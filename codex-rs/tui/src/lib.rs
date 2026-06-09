@@ -1501,9 +1501,16 @@ async fn run_ratatui_app(
         if onboarding_result.directory_trust_persisted
             || (show_login_screen && !uses_remote_workspace)
         {
+            // Hannah Montana mode: switch this session to the blended provider
+            // instead of authenticating. Session-only override, like `--oss`;
+            // nothing is persisted to config.toml.
+            let mut onboarding_overrides = overrides.clone();
+            if let Some(provider) = onboarding_result.hannah_montana_provider.as_ref() {
+                onboarding_overrides.model_provider = Some(provider.clone());
+            }
             load_config_or_exit(
                 cli_kv_overrides.clone(),
-                overrides.clone(),
+                onboarding_overrides,
                 loader_overrides.clone(),
                 cloud_config_bundle.clone(),
                 strict_config,

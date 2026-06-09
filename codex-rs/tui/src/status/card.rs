@@ -407,6 +407,29 @@ impl StatusHistoryCell {
         ])
     }
 
+    fn no_limit_data_line(&self, formatter: &FieldFormatter, refreshing: bool) -> Line<'static> {
+        if !self.show_chatgpt_usage_link {
+            return formatter.line(
+                "Limits",
+                vec![
+                    Span::from("∞ ").cyan(),
+                    Span::from("usage limits disabled").dim(),
+                ],
+            );
+        }
+        formatter.line(
+            "Limits",
+            vec![
+                Span::from(if refreshing {
+                    "refresh requested; run /status again shortly."
+                } else {
+                    "not available for this account"
+                })
+                .dim(),
+            ],
+        )
+    }
+
     fn rate_limit_lines(
         &self,
         state: &StatusRateLimitState,
@@ -416,10 +439,7 @@ impl StatusHistoryCell {
         match &state.rate_limits {
             StatusRateLimitData::Available(rows_data) => {
                 if rows_data.is_empty() {
-                    return vec![formatter.line(
-                        "Limits",
-                        vec![Span::from("not available for this account").dim()],
-                    )];
+                    return vec![self.no_limit_data_line(formatter, /*refreshing*/ false)];
                 }
 
                 self.rate_limit_row_lines(rows_data, available_inner_width, formatter)
@@ -439,12 +459,12 @@ impl StatusHistoryCell {
                 lines
             }
             StatusRateLimitData::Unavailable => {
-                vec![formatter.line(
-                    "Limits",
-                    vec![Span::from("not available for this account").dim()],
-                )]
+                vec![self.no_limit_data_line(formatter, /*refreshing*/ false)]
             }
             StatusRateLimitData::Missing => {
+                if !self.show_chatgpt_usage_link {
+                    return vec![self.no_limit_data_line(formatter, state.refreshing_rate_limits)];
+                }
                 vec![formatter.line(
                     "Limits",
                     vec![Span::from(if state.refreshing_rate_limits {

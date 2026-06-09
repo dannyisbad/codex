@@ -41,6 +41,7 @@ use crate::legacy_core::windows_sandbox::WindowsSandboxLevelExt;
 use crate::onboarding::auth::AuthModeWidget;
 use crate::onboarding::auth::SignInOption;
 use crate::onboarding::auth::SignInState;
+use crate::onboarding::auth::locate_cyrus_bin;
 use crate::onboarding::keys;
 use crate::onboarding::trust_directory::TrustDirectorySelection;
 use crate::onboarding::trust_directory::TrustDirectoryWidget;
@@ -93,6 +94,29 @@ pub(crate) struct OnboardingScreenArgs {
 pub(crate) struct OnboardingResult {
     pub directory_trust_persisted: bool,
     pub should_exit: bool,
+    /// Set when the user picked Hannah Montana mode on the sign-in screen;
+    /// the session should switch to this provider instead of authenticating.
+    pub hannah_montana_provider: Option<String>,
+}
+
+/// Provider id used by Hannah Montana mode (the blended local provider).
+const HANNAH_MONTANA_PROVIDER_ID: &str = "shadow";
+
+/// Returns the blended provider id when Hannah Montana mode is offerable, i.e.
+/// when setup is *possible*: either the `cyrus` setup binary is locatable (so
+/// the run can write the shadow provider) or the shadow provider already exists
+/// in config and does not require OpenAI auth. This avoids the chicken-and-egg
+/// where the option only appeared after setup had already run.
+fn detect_hannah_montana_provider(config: &Config) -> Option<String> {
+    let provider_configured = config
+        .model_providers
+        .get(HANNAH_MONTANA_PROVIDER_ID)
+        .is_some_and(|provider| !provider.requires_openai_auth);
+    if provider_configured || locate_cyrus_bin().is_some() {
+        Some(HANNAH_MONTANA_PROVIDER_ID.to_string())
+    } else {
+        None
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -134,6 +158,8 @@ impl OnboardingScreen {
                     login_status,
                     app_server_request_handle,
                     forced_login_method,
+                    hannah_montana_provider: detect_hannah_montana_provider(&config),
+                    cwd: config.cwd.to_path_buf(),
                     animations_enabled: config.animations,
                     animations_suppressed: std::cell::Cell::new(false),
                 }));
@@ -570,9 +596,14 @@ pub(crate) async fn run_onboarding_app(
             }
         }
     }
+    let hannah_montana_provider = onboarding_screen.steps.iter().find_map(|step| match step {
+        Step::Auth(widget) => widget.selected_hannah_montana_provider(),
+        _ => None,
+    });
     Ok(OnboardingResult {
         directory_trust_persisted,
         should_exit: onboarding_screen.should_exit(),
+        hannah_montana_provider,
     })
 }
 
