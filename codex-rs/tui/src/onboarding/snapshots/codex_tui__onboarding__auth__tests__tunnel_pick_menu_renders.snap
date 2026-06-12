@@ -1,0 +1,16 @@
+---
+source: tui/src/onboarding/auth.rs
+expression: terminal.backend()
+---
+  Pick how cyrus reaches you
+
+> 1. Quick tunnel (cloudflared)
+     Instant, no signup. The link can change on restart, so you might
+re-run setup once in a while.
+  2. Stable tunnel (ngrok) — recommended
+     A permanent link from one free ngrok signup. Set it once, forget
+it.
+  3. My own domain (cloudflared)
+     Advanced — you already run a named cloudflared tunnel.
+
+  Press enter to choose · esc to go back

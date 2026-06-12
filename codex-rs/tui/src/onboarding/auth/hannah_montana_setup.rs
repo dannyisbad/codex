@@ -42,6 +42,32 @@ const SETUP_STEPS: [(&str, &str); 6] = [
     ("codex_config", "Writing Codex config"),
 ];
 
+/// How `cyrus` should expose itself to the user, chosen via the tunnel picker.
+/// Maps directly to the `--tunnel` flag passed to `cyrus setup`.
+pub(crate) enum TunnelArg {
+    Quick,
+    Ngrok(String),
+    Named,
+}
+
+/// Builds the `cyrus setup` arguments for a tunnel selection, appended after
+/// `--json`:
+/// - Quick    -> `--tunnel quick`
+/// - Named    -> `--tunnel named`
+/// - Ngrok(d) -> `--tunnel ngrok --ngrok-domain <d>`
+pub(crate) fn tunnel_args(tunnel: &TunnelArg) -> Vec<String> {
+    match tunnel {
+        TunnelArg::Quick => vec!["--tunnel".to_string(), "quick".to_string()],
+        TunnelArg::Named => vec!["--tunnel".to_string(), "named".to_string()],
+        TunnelArg::Ngrok(domain) => vec![
+            "--tunnel".to_string(),
+            "ngrok".to_string(),
+            "--ngrok-domain".to_string(),
+            domain.clone(),
+        ],
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum StepStatus {
     Pending,
@@ -226,7 +252,7 @@ fn cyrus_exe_name() -> &'static str {
 
 /// Begins (or restarts) the Hannah Montana setup run: installs the initial
 /// progress state, schedules a frame, and spawns the task that drives `cyrus`.
-pub(super) fn start_hannah_montana_setup(widget: &AuthModeWidget) {
+pub(super) fn start_hannah_montana_setup(widget: &AuthModeWidget, tunnel: TunnelArg) {
     let attempt_id = Uuid::new_v4().to_string();
     *widget.sign_in_state.write().unwrap() =
         SignInState::HannahMontanaSetup(HannahMontanaSetupState::new(attempt_id.clone()));
@@ -238,7 +264,7 @@ pub(super) fn start_hannah_montana_setup(widget: &AuthModeWidget) {
     let bin = locate_cyrus_bin();
 
     tokio::spawn(async move {
-        run_setup(sign_in_state, request_frame, attempt_id, cwd, bin).await;
+        run_setup(sign_in_state, request_frame, attempt_id, cwd, bin, tunnel).await;
     });
 }
 
@@ -248,6 +274,7 @@ async fn run_setup(
     attempt_id: String,
     cwd: PathBuf,
     bin: Option<PathBuf>,
+    tunnel: TunnelArg,
 ) {
     let Some(bin) = bin else {
         finish_with_error(
@@ -264,6 +291,7 @@ async fn run_setup(
         .arg("--repo")
         .arg(&cwd)
         .arg("--json")
+        .args(tunnel_args(&tunnel))
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .kill_on_drop(true)
@@ -472,6 +500,16 @@ mod tests {
 
     fn parse(line: &str) -> SetupEvent {
         serde_json::from_str(line).expect("event should parse")
+    }
+
+    #[test]
+    fn tunnel_args_emit_expected_flag_vectors() {
+        assert_eq!(tunnel_args(&TunnelArg::Quick), vec!["--tunnel", "quick"]);
+        assert_eq!(tunnel_args(&TunnelArg::Named), vec!["--tunnel", "named"]);
+        assert_eq!(
+            tunnel_args(&TunnelArg::Ngrok("my.ngrok-free.app".to_string())),
+            vec!["--tunnel", "ngrok", "--ngrok-domain", "my.ngrok-free.app"]
+        );
     }
 
     #[test]

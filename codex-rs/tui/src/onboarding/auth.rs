@@ -77,6 +77,7 @@ mod hannah_montana_setup;
 mod headless_chatgpt_login;
 
 pub(crate) use hannah_montana_setup::HannahMontanaSetupState;
+pub(crate) use hannah_montana_setup::TunnelArg;
 pub(crate) use hannah_montana_setup::locate_cyrus_bin;
 
 #[derive(Clone)]
@@ -89,10 +90,22 @@ pub(crate) enum SignInState {
     ChatGptSuccess,
     ApiKeyEntry(ApiKeyInputState),
     ApiKeyConfigured,
+    /// The user picked cyrus and is choosing how it should reach them; the
+    /// inner state holds the highlighted option and optional ngrok-domain entry.
+    HannahMontanaTunnelPick(TunnelPickState),
     /// A `cyrus setup` run is in flight (or has failed and awaits retry); the
     /// inner state holds live step progress.
     HannahMontanaSetup(HannahMontanaSetupState),
     HannahMontanaConfigured,
+}
+
+/// Tunnel-provider picker state. `highlighted` is 0=Quick, 1=Ngrok, 2=Named.
+/// `ngrok_domain = Some(buf)` means the user is currently typing the ngrok
+/// domain (mirrors `ApiKeyInputState`'s editable buffer).
+#[derive(Clone, Default)]
+pub(crate) struct TunnelPickState {
+    highlighted: usize,
+    ngrok_domain: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -188,6 +201,10 @@ impl KeyboardHandler for AuthModeWidget {
             return;
         }
 
+        if self.handle_tunnel_pick_key_event(&key_event) {
+            return;
+        }
+
         if keys::MOVE_UP.is_pressed(key_event) {
             self.move_highlight(/*delta*/ -1);
             return;
@@ -221,9 +238,12 @@ impl KeyboardHandler for AuthModeWidget {
                 SignInState::ChatGptSuccessMessage => {
                     *self.sign_in_state.write().unwrap() = SignInState::ChatGptSuccess;
                 }
-                // Enter restarts a failed Hannah Montana setup run.
+                // Enter on a failed Hannah Montana run returns to the tunnel
+                // picker so the user can re-choose before retrying.
                 SignInState::HannahMontanaSetup(state) if state.error.is_some() => {
-                    self.start_hannah_montana_setup();
+                    self.set_error(/*message*/ None);
+                    *self.sign_in_state.write().unwrap() =
+                        SignInState::HannahMontanaTunnelPick(TunnelPickState::default());
                 }
                 _ => {}
             }
@@ -409,14 +429,16 @@ impl AuthModeWidget {
             SignInOption::HannahMontana => {
                 if self.hannah_montana_provider.is_some() {
                     self.set_error(/*message*/ None);
-                    self.start_hannah_montana_setup();
+                    *self.sign_in_state.write().unwrap() =
+                        SignInState::HannahMontanaTunnelPick(TunnelPickState::default());
+                    self.request_frame.schedule_frame();
                 }
             }
         }
     }
 
-    fn start_hannah_montana_setup(&self) {
-        hannah_montana_setup::start_hannah_montana_setup(self);
+    fn start_hannah_montana_setup(&self, tunnel: TunnelArg) {
+        hannah_montana_setup::start_hannah_montana_setup(self, tunnel);
     }
 
     /// Returns the blended provider id when the user completed sign-in by
@@ -676,6 +698,122 @@ impl AuthModeWidget {
             .render(area, buf);
     }
 
+    fn render_tunnel_pick(&self, state: &TunnelPickState, area: Rect, buf: &mut Buffer) {
+        if let Some(domain) = &state.ngrok_domain {
+            self.render_tunnel_pick_ngrok_entry(domain, area, buf);
+            return;
+        }
+
+        let create_mode_item = |idx: usize,
+                                label: Line<'static>,
+                                description: &str|
+         -> Vec<Line<'static>> {
+            let is_selected = state.highlighted == idx;
+            let caret = if is_selected { ">" } else { " " };
+
+            let line1 = if is_selected {
+                let mut spans = vec![format!("{caret} {index}. ", index = idx + 1).cyan().dim()];
+                spans.extend(label.spans.into_iter().map(|span| span.cyan()));
+                Line::from(spans)
+            } else {
+                let mut spans = vec![format!("  {index}. ", index = idx + 1).into()];
+                spans.extend(label.spans);
+                Line::from(spans)
+            };
+
+            let line2 = if is_selected {
+                Line::from(format!("     {description}"))
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::DIM)
+            } else {
+                Line::from(format!("     {description}"))
+                    .style(Style::default().add_modifier(Modifier::DIM))
+            };
+
+            vec![line1, line2]
+        };
+
+        let mut lines: Vec<Line> = vec![
+            Line::from(vec!["  ".into(), "Pick how cyrus reaches you".bold()]),
+            "".into(),
+        ];
+
+        lines.extend(create_mode_item(
+            0,
+            "Quick tunnel (cloudflared)".into(),
+            "Instant, no signup. The link can change on restart, so you might re-run setup once in a while.",
+        ));
+        lines.extend(create_mode_item(
+            1,
+            Line::from(vec!["Stable tunnel (ngrok)".into(), " — recommended".dim()]),
+            "A permanent link from one free ngrok signup. Set it once, forget it.",
+        ));
+        lines.extend(create_mode_item(
+            2,
+            "My own domain (cloudflared)".into(),
+            "Advanced — you already run a named cloudflared tunnel.",
+        ));
+
+        lines.push("".into());
+        lines.push(Line::from(vec![
+            "  Press ".dim(),
+            self.confirm_binding().into(),
+            " to choose · ".dim(),
+            self.cancel_binding().into(),
+            " to go back".dim(),
+        ]));
+
+        Paragraph::new(lines)
+            .wrap(Wrap { trim: false })
+            .render(area, buf);
+    }
+
+    fn render_tunnel_pick_ngrok_entry(&self, domain: &str, area: Rect, buf: &mut Buffer) {
+        let [intro_area, input_area, footer_area] = Layout::vertical([
+            Constraint::Min(4),
+            Constraint::Length(3),
+            Constraint::Min(2),
+        ])
+        .areas(area);
+
+        let intro_lines: Vec<Line> = vec![
+            Line::from(vec!["> ".into(), "Paste your reserved ngrok domain".bold()]),
+            "".into(),
+            "  e.g. your-name.ngrok-free.app".dim().into(),
+            "".into(),
+        ];
+        Paragraph::new(intro_lines)
+            .wrap(Wrap { trim: false })
+            .render(intro_area, buf);
+
+        let content_line: Line = if domain.is_empty() {
+            vec!["your-name.ngrok-free.app".dim()].into()
+        } else {
+            Line::from(domain.to_string())
+        };
+        Paragraph::new(content_line)
+            .wrap(Wrap { trim: false })
+            .block(
+                Block::default()
+                    .title("ngrok domain")
+                    .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded)
+                    .border_style(Style::default().fg(Color::Cyan)),
+            )
+            .render(input_area, buf);
+
+        let footer_lines: Vec<Line> = vec![Line::from(vec![
+            "  Press ".dim(),
+            self.confirm_binding().into(),
+            " to continue · ".dim(),
+            self.cancel_binding().into(),
+            " to go back".dim(),
+        ])];
+        Paragraph::new(footer_lines)
+            .wrap(Wrap { trim: false })
+            .render(footer_area, buf);
+    }
+
     fn render_hannah_montana_configured(&self, area: Rect, buf: &mut Buffer) {
         let lines = vec![
             "✓ cyrus".fg(Color::Green).into(),
@@ -838,6 +976,82 @@ impl AuthModeWidget {
 
         drop(guard);
         self.request_frame.schedule_frame();
+        true
+    }
+
+    /// Handles keys while the tunnel picker is active. Returns `true` when the
+    /// event was consumed (i.e. the picker was on screen).
+    fn handle_tunnel_pick_key_event(&mut self, key_event: &KeyEvent) -> bool {
+        enum PickAction {
+            Start(TunnelArg),
+            RequestFrame,
+        }
+
+        let action = {
+            let mut guard = self.sign_in_state.write().unwrap();
+            let SignInState::HannahMontanaTunnelPick(state) = &mut *guard else {
+                return false;
+            };
+
+            if let Some(domain) = &mut state.ngrok_domain {
+                // ngrok-domain text entry (mirrors handle_api_key_entry_key_event).
+                if keys::CANCEL.is_pressed(*key_event) {
+                    state.ngrok_domain = None;
+                    Some(PickAction::RequestFrame)
+                } else if keys::CONFIRM.is_pressed(*key_event) {
+                    let trimmed = domain.trim().to_string();
+                    if trimmed.is_empty() {
+                        None
+                    } else {
+                        Some(PickAction::Start(TunnelArg::Ngrok(trimmed)))
+                    }
+                } else {
+                    match key_event.code {
+                        KeyCode::Backspace => {
+                            domain.pop();
+                            Some(PickAction::RequestFrame)
+                        }
+                        KeyCode::Char(c)
+                            if key_event.kind == KeyEventKind::Press
+                                && !key_event.modifiers.contains(KeyModifiers::SUPER)
+                                && !key_event.modifiers.contains(KeyModifiers::CONTROL)
+                                && !key_event.modifiers.contains(KeyModifiers::ALT) =>
+                        {
+                            domain.push(c);
+                            Some(PickAction::RequestFrame)
+                        }
+                        _ => None,
+                    }
+                }
+            } else if keys::CANCEL.is_pressed(*key_event) {
+                *guard = SignInState::PickMode;
+                Some(PickAction::RequestFrame)
+            } else if keys::MOVE_UP.is_pressed(*key_event) {
+                state.highlighted = state.highlighted.saturating_sub(1);
+                Some(PickAction::RequestFrame)
+            } else if keys::MOVE_DOWN.is_pressed(*key_event) {
+                state.highlighted = (state.highlighted + 1).min(2);
+                Some(PickAction::RequestFrame)
+            } else if keys::CONFIRM.is_pressed(*key_event) {
+                match state.highlighted {
+                    0 => Some(PickAction::Start(TunnelArg::Quick)),
+                    2 => Some(PickAction::Start(TunnelArg::Named)),
+                    // Ngrok: switch into domain entry instead of starting.
+                    _ => {
+                        state.ngrok_domain = Some(String::new());
+                        Some(PickAction::RequestFrame)
+                    }
+                }
+            } else {
+                None
+            }
+        };
+
+        match action {
+            Some(PickAction::Start(tunnel)) => self.start_hannah_montana_setup(tunnel),
+            Some(PickAction::RequestFrame) => self.request_frame.schedule_frame(),
+            None => {}
+        }
         true
     }
 
@@ -1032,6 +1246,7 @@ impl StepStateProvider for AuthModeWidget {
             | SignInState::ApiKeyEntry(_)
             | SignInState::ChatGptContinueInBrowser(_)
             | SignInState::ChatGptDeviceCode(_)
+            | SignInState::HannahMontanaTunnelPick(_)
             | SignInState::HannahMontanaSetup(_)
             | SignInState::ChatGptSuccessMessage => StepState::InProgress,
             SignInState::ChatGptSuccess
@@ -1065,6 +1280,9 @@ impl WidgetRef for AuthModeWidget {
             }
             SignInState::ApiKeyConfigured => {
                 self.render_api_key_configured(area, buf);
+            }
+            SignInState::HannahMontanaTunnelPick(state) => {
+                self.render_tunnel_pick(state, area, buf);
             }
             SignInState::HannahMontanaSetup(state) => {
                 hannah_montana_setup::render_hannah_montana_setup(self, area, buf, state);
@@ -1466,6 +1684,87 @@ mod tests {
         ]);
 
         let terminal = render_hannah_montana_snapshot(&widget, &state, /*height*/ 16);
+
+        insta::assert_snapshot!(terminal.backend());
+    }
+
+    #[tokio::test]
+    async fn selecting_hannah_montana_opens_tunnel_pick() {
+        let (mut widget, _tmp) = widget_forced_chatgpt().await;
+        widget.hannah_montana_provider = Some("shadow".to_string());
+
+        widget.handle_sign_in_option(SignInOption::HannahMontana);
+
+        assert!(matches!(
+            &*widget.sign_in_state.read().unwrap(),
+            SignInState::HannahMontanaTunnelPick(state)
+                if state.highlighted == 0 && state.ngrok_domain.is_none()
+        ));
+    }
+
+    #[tokio::test]
+    async fn tunnel_pick_down_then_enter_highlights_named() {
+        let (mut widget, _tmp) = widget_forced_chatgpt().await;
+        widget.hannah_montana_provider = Some("shadow".to_string());
+        *widget.sign_in_state.write().unwrap() =
+            SignInState::HannahMontanaTunnelPick(TunnelPickState::default());
+
+        // Down twice moves the highlight from Quick (0) to Named (2).
+        let down = KeyEvent::new(KeyCode::Down, KeyModifiers::NONE);
+        widget.handle_tunnel_pick_key_event(&down);
+        widget.handle_tunnel_pick_key_event(&down);
+        assert!(matches!(
+            &*widget.sign_in_state.read().unwrap(),
+            SignInState::HannahMontanaTunnelPick(state) if state.highlighted == 2
+        ));
+
+        // Enter on Named starts a setup run with the Named tunnel arg.
+        assert_eq!(
+            hannah_montana_setup::tunnel_args(&TunnelArg::Named),
+            vec!["--tunnel".to_string(), "named".to_string()]
+        );
+        let enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
+        widget.handle_tunnel_pick_key_event(&enter);
+        assert!(matches!(
+            &*widget.sign_in_state.read().unwrap(),
+            SignInState::HannahMontanaSetup(_)
+        ));
+    }
+
+    fn render_tunnel_pick_snapshot(
+        widget: &AuthModeWidget,
+        state: &TunnelPickState,
+        height: u16,
+    ) -> Terminal<VT100Backend> {
+        let mut terminal =
+            Terminal::new(VT100Backend::new(/*width*/ 70, height)).expect("terminal");
+        terminal
+            .draw(|f| widget.render_tunnel_pick(state, f.area(), f.buffer_mut()))
+            .expect("draw");
+        terminal
+    }
+
+    #[tokio::test]
+    async fn tunnel_pick_menu_renders() {
+        let (mut widget, _tmp) = widget_forced_chatgpt().await;
+        widget.hannah_montana_provider = Some("shadow".to_string());
+        let state = TunnelPickState::default();
+
+        let terminal = render_tunnel_pick_snapshot(&widget, &state, /*height*/ 14);
+
+        insta::assert_snapshot!(terminal.backend());
+    }
+
+    #[tokio::test]
+    async fn tunnel_pick_ngrok_entry_renders() {
+        let (mut widget, _tmp) = widget_forced_chatgpt().await;
+        widget.hannah_montana_provider = Some("shadow".to_string());
+        let state = TunnelPickState {
+            highlighted: 1,
+            ngrok_domain: Some(String::new()),
+        };
+
+        let terminal = render_tunnel_pick_snapshot(&widget, &state, /*height*/ 12);
 
         insta::assert_snapshot!(terminal.backend());
     }

@@ -1,0 +1,13 @@
+---
+source: tui/src/onboarding/auth.rs
+expression: terminal.backend()
+---
+> Paste your reserved ngrok domain
+
+  e.g. your-name.ngrok-free.app
+
+
+╭ngrok domain────────────────────────────────────────────────────────╮
+│your-name.ngrok-free.app                                            │
+╰────────────────────────────────────────────────────────────────────╯
+  Press enter to continue · esc to go back
