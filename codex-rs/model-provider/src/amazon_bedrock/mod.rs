@@ -15,6 +15,7 @@ use codex_model_provider_info::ModelProviderAwsAuthInfo;
 use codex_model_provider_info::ModelProviderInfo;
 use codex_models_manager::manager::SharedModelsManager;
 use codex_models_manager::manager::StaticModelsManager;
+use codex_protocol::account::AmazonBedrockCredentialSource;
 use codex_protocol::account::ProviderAccount;
 use codex_protocol::error::Result;
 use codex_protocol::openai_models::ModelsResponse;
@@ -106,8 +107,13 @@ impl ModelProvider for AmazonBedrockModelProvider {
     }
 
     fn account_state(&self) -> ProviderAccountResult {
+        let credential_source = if self.managed_auth().is_some() {
+            AmazonBedrockCredentialSource::CodexManaged
+        } else {
+            AmazonBedrockCredentialSource::AwsManaged
+        };
         Ok(ProviderAccountState {
-            account: Some(ProviderAccount::AmazonBedrock),
+            account: Some(ProviderAccount::AmazonBedrock { credential_source }),
             requires_openai_auth: false,
         })
     }
@@ -194,6 +200,15 @@ mod tests {
             Some(CodexAuth::BedrockApiKey(managed_auth))
         );
         assert_eq!(
+            provider.account_state(),
+            Ok(ProviderAccountState {
+                account: Some(ProviderAccount::AmazonBedrock {
+                    credential_source: AmazonBedrockCredentialSource::CodexManaged,
+                }),
+                requires_openai_auth: false,
+            })
+        );
+        assert_eq!(
             provider
                 .runtime_base_url()
                 .await
@@ -222,6 +237,15 @@ mod tests {
 
         assert!(provider.auth_manager().is_none());
         assert_eq!(provider.auth().await, None);
+        assert_eq!(
+            provider.account_state(),
+            Ok(ProviderAccountState {
+                account: Some(ProviderAccount::AmazonBedrock {
+                    credential_source: AmazonBedrockCredentialSource::AwsManaged,
+                }),
+                requires_openai_auth: false,
+            })
+        );
     }
 
     #[test]
