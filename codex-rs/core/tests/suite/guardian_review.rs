@@ -72,6 +72,9 @@ async fn guardian_timeout_falls_back_to_manual_approval_end_to_end() -> Result<(
     let mut builder = test_codex()
         .with_session_source(SessionSource::Cli)
         .with_config(move |config| {
+            let _ = config
+                .features
+                .enable(Feature::GuardianManualApprovalFallback);
             config.permissions.approval_policy = Constrained::allow_any(approval_policy);
             config
                 .set_legacy_sandbox_policy(sandbox_policy_for_config)
@@ -174,7 +177,7 @@ async fn guardian_timeout_falls_back_to_manual_approval_end_to_end() -> Result<(
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn guardian_timeout_does_not_fallback_when_feature_disabled() -> Result<()> {
+async fn guardian_timeout_does_not_fallback_by_default() -> Result<()> {
     skip_if_no_network!(Ok(()));
     skip_if_sandbox!(Ok(()));
 
@@ -189,9 +192,6 @@ async fn guardian_timeout_does_not_fallback_when_feature_disabled() -> Result<()
     let mut builder = test_codex()
         .with_session_source(SessionSource::Cli)
         .with_config(move |config| {
-            let _ = config
-                .features
-                .disable(Feature::GuardianManualApprovalFallback);
             config.permissions.approval_policy = Constrained::allow_any(approval_policy);
             config
                 .set_legacy_sandbox_policy(sandbox_policy_for_config)
@@ -286,6 +286,9 @@ async fn guardian_capacity_exhaustion_falls_back_to_manual_approval_end_to_end()
     let mut builder = test_codex()
         .with_session_source(SessionSource::Cli)
         .with_config(move |config| {
+            let _ = config
+                .features
+                .enable(Feature::GuardianManualApprovalFallback);
             config.permissions.approval_policy = Constrained::allow_any(approval_policy);
             config
                 .set_legacy_sandbox_policy(sandbox_policy_for_config)
