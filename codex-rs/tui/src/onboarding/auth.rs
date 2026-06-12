@@ -519,8 +519,8 @@ impl AuthModeWidget {
                     lines.extend(create_mode_item(
                         idx,
                         option,
-                        "Hannah Montana (best of both worlds)",
-                        "Blended provider - no sign-in, no limits",
+                        "cyrus (best of both worlds)",
+                        "Run codex on the plan you already pay for, without limit",
                     ));
                 }
             }
@@ -677,18 +677,10 @@ impl AuthModeWidget {
     }
 
     fn render_hannah_montana_configured(&self, area: Rect, buf: &mut Buffer) {
-        let provider = self
-            .hannah_montana_provider
-            .clone()
-            .unwrap_or_else(|| "blended".to_string());
         let lines = vec![
-            "✓ Hannah Montana mode".fg(Color::Green).into(),
+            "✓ cyrus".fg(Color::Green).into(),
             "".into(),
-            Line::from(vec![
-                "  Best of both worlds - using the ".into(),
-                provider.cyan(),
-                " provider. No sign-in, no limits.".into(),
-            ]),
+            "  Best of both worlds.".into(),
         ];
 
         Paragraph::new(lines)

@@ -1,9 +1,8 @@
 ---
 source: tui/src/onboarding/auth.rs
-assertion_line: 1448
 expression: terminal.backend()
 ---
-  Setting up Hannah Montana mode
+  Setting up cyrus
 
   ✓ Loading secrets — loaded
   ⏳ Connecting Chrome

@@ -420,7 +420,7 @@ pub(super) fn render_hannah_montana_setup(
     let mut lines: Vec<Line> = vec![
         Line::from(vec![
             "  ".into(),
-            "Setting up Hannah Montana mode".bold(),
+            "Setting up cyrus".bold(),
         ]),
         "".into(),
     ];
