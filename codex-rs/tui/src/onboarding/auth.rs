@@ -273,6 +273,10 @@ pub(crate) struct AuthModeWidget {
     /// Provider id to switch to when the user picks Hannah Montana mode.
     /// `None` hides the option (the blended provider is not configured).
     pub hannah_montana_provider: Option<String>,
+    /// When true, cyrus launched codex but isn't set up yet, so the sign-in
+    /// screen offers only the cyrus (Hannah Montana) option and hides the
+    /// ChatGPT/device-code/API-key options.
+    pub cyrus_forced: bool,
     /// Codex working directory, passed to `cyrus setup --repo` for Hannah
     /// Montana mode.
     pub cwd: PathBuf,
@@ -357,6 +361,11 @@ impl AuthModeWidget {
     }
 
     fn displayed_sign_in_options(&self) -> Vec<SignInOption> {
+        // When cyrus forces the setup flow, offer only the cyrus option so an
+        // already-authed user is never shown "Sign in with ChatGPT".
+        if self.cyrus_forced {
+            return vec![SignInOption::HannahMontana];
+        }
         let mut options = vec![SignInOption::ChatGpt];
         if self.is_chatgpt_login_allowed() {
             options.push(SignInOption::DeviceCode);
@@ -371,6 +380,11 @@ impl AuthModeWidget {
     }
 
     fn selectable_sign_in_options(&self) -> Vec<SignInOption> {
+        // When cyrus forces the setup flow, offer only the cyrus option so an
+        // already-authed user is never shown "Sign in with ChatGPT".
+        if self.cyrus_forced {
+            return vec![SignInOption::HannahMontana];
+        }
         let mut options = Vec::new();
         if self.is_chatgpt_login_allowed() {
             options.push(SignInOption::ChatGpt);
@@ -463,17 +477,27 @@ impl AuthModeWidget {
     }
 
     fn render_pick_mode(&self, area: Rect, buf: &mut Buffer) {
-        let mut lines: Vec<Line> = vec![
-            Line::from(vec![
-                "  ".into(),
-                "Sign in with ChatGPT to use Codex as part of your paid plan".into(),
-            ]),
-            Line::from(vec![
-                "  ".into(),
-                "or connect an API key for usage-based billing".into(),
-            ]),
-            "".into(),
-        ];
+        let mut lines: Vec<Line> = if self.cyrus_forced {
+            vec![
+                Line::from(vec![
+                    "  ".into(),
+                    "Set up cyrus to run codex on the plan you already pay for".into(),
+                ]),
+                "".into(),
+            ]
+        } else {
+            vec![
+                Line::from(vec![
+                    "  ".into(),
+                    "Sign in with ChatGPT to use Codex as part of your paid plan".into(),
+                ]),
+                Line::from(vec![
+                    "  ".into(),
+                    "or connect an API key for usage-based billing".into(),
+                ]),
+                "".into(),
+            ]
+        };
 
         let create_mode_item = |idx: usize,
                                 selected_mode: SignInOption,
@@ -549,7 +573,7 @@ impl AuthModeWidget {
             lines.push("".into());
         }
 
-        if !self.is_api_login_allowed() {
+        if !self.cyrus_forced && !self.is_api_login_allowed() {
             lines.push(
                 "  API key login is disabled by this workspace. Sign in with ChatGPT to continue."
                     .dim()
@@ -1370,6 +1394,7 @@ mod tests {
             app_server_request_handle: AppServerRequestHandle::InProcess(client.request_handle()),
             forced_login_method: Some(ForcedLoginMethod::Chatgpt),
             hannah_montana_provider: None,
+            cyrus_forced: false,
             cwd: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
             animations_enabled: true,
             animations_suppressed: std::cell::Cell::new(false),
@@ -1778,6 +1803,41 @@ mod tests {
             Terminal::new(VT100Backend::new(/*width*/ 70, /*height*/ 10)).expect("terminal");
         terminal
             .draw(|f| widget.render_hannah_montana_configured(f.area(), f.buffer_mut()))
+            .expect("draw");
+
+        insta::assert_snapshot!(terminal.backend());
+    }
+
+    #[tokio::test]
+    async fn cyrus_forced_offers_only_hannah_montana() {
+        let (mut widget, _tmp) = widget_forced_chatgpt().await;
+        // Provider offerable, but cyrus forces the flow to the cyrus option only.
+        widget.hannah_montana_provider = Some("shadow".to_string());
+        widget.cyrus_forced = true;
+        widget.highlighted_mode = SignInOption::HannahMontana;
+
+        assert_eq!(
+            widget.selectable_sign_in_options(),
+            vec![SignInOption::HannahMontana]
+        );
+        assert_eq!(
+            widget.displayed_sign_in_options(),
+            vec![SignInOption::HannahMontana]
+        );
+        assert_eq!(widget.highlighted_mode, SignInOption::HannahMontana);
+    }
+
+    #[tokio::test]
+    async fn cyrus_forced_pick_mode_renders() {
+        let (mut widget, _tmp) = widget_forced_chatgpt().await;
+        widget.hannah_montana_provider = Some("shadow".to_string());
+        widget.cyrus_forced = true;
+        widget.highlighted_mode = SignInOption::HannahMontana;
+
+        let mut terminal =
+            Terminal::new(VT100Backend::new(/*width*/ 70, /*height*/ 12)).expect("terminal");
+        terminal
+            .draw(|f| widget.render_pick_mode(f.area(), f.buffer_mut()))
             .expect("draw");
 
         insta::assert_snapshot!(terminal.backend());

@@ -86,6 +86,9 @@ pub(crate) struct OnboardingScreen {
 pub(crate) struct OnboardingScreenArgs {
     pub show_trust_screen: bool,
     pub show_login_screen: bool,
+    /// When set, cyrus launched codex but is not yet set up, so the sign-in
+    /// screen is forced to offer only the cyrus (Hannah Montana) option.
+    pub cyrus_forced: bool,
     pub login_status: LoginStatus,
     pub app_server_request_handle: Option<AppServerRequestHandle>,
     pub config: Config,
@@ -107,7 +110,7 @@ const HANNAH_MONTANA_PROVIDER_ID: &str = "shadow";
 /// the run can write the shadow provider) or the shadow provider already exists
 /// in config and does not require OpenAI auth. This avoids the chicken-and-egg
 /// where the option only appeared after setup had already run.
-fn detect_hannah_montana_provider(config: &Config) -> Option<String> {
+pub(crate) fn detect_hannah_montana_provider(config: &Config) -> Option<String> {
     let provider_configured = config
         .model_providers
         .get(HANNAH_MONTANA_PROVIDER_ID)
@@ -132,6 +135,7 @@ impl OnboardingScreen {
         let OnboardingScreenArgs {
             show_trust_screen,
             show_login_screen,
+            cyrus_forced,
             login_status,
             app_server_request_handle,
             config,
@@ -145,9 +149,15 @@ impl OnboardingScreen {
             config.animations,
         )));
         if show_login_screen {
-            let highlighted_mode = match forced_login_method {
-                Some(ForcedLoginMethod::Api) => SignInOption::ApiKey,
-                _ => SignInOption::ChatGpt,
+            // When cyrus forces the setup flow, default the highlight to the
+            // cyrus option since it is the only one offered.
+            let highlighted_mode = if cyrus_forced {
+                SignInOption::HannahMontana
+            } else {
+                match forced_login_method {
+                    Some(ForcedLoginMethod::Api) => SignInOption::ApiKey,
+                    _ => SignInOption::ChatGpt,
+                }
             };
             if let Some(app_server_request_handle) = app_server_request_handle {
                 steps.push(Step::Auth(AuthModeWidget {
@@ -159,6 +169,7 @@ impl OnboardingScreen {
                     app_server_request_handle,
                     forced_login_method,
                     hannah_montana_provider: detect_hannah_montana_provider(&config),
+                    cyrus_forced,
                     cwd: config.cwd.to_path_buf(),
                     animations_enabled: config.animations,
                     animations_suppressed: std::cell::Cell::new(false),

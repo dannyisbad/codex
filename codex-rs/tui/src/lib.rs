@@ -1447,10 +1447,15 @@ async fn run_ratatui_app(
         should_show_onboarding(login_status, &initial_config, should_show_trust_screen_flag);
 
     let config = if should_show_onboarding {
-        let show_login_screen = should_show_login_screen(login_status, &initial_config);
+        // Force the sign-in screen to render when cyrus launched us but isn't
+        // set up yet, even for an already-authed OpenAI user.
+        let cyrus_forced = cyrus_force_onboarding(&initial_config);
+        let show_login_screen =
+            should_show_login_screen(login_status, &initial_config) || cyrus_forced;
         let onboarding_result = run_onboarding_app(
             OnboardingScreenArgs {
                 show_login_screen,
+                cyrus_forced,
                 show_trust_screen: should_show_trust_screen_flag,
                 login_status,
                 app_server_request_handle: app_server
@@ -2055,12 +2060,30 @@ fn should_show_trust_screen(config: &Config) -> bool {
     config.active_project.trust_level.is_none()
 }
 
+/// Returns true when cyrus wrapped this codex launch but cyrus is not set up
+/// yet, so onboarding must force the cyrus setup flow regardless of OpenAI auth.
+///
+/// cyrus sets `CYRUS_WRAPPED=1` on every launch. Once cyrus is set up it also
+/// injects `-c model_provider=shadow`; until then the user runs on their default
+/// provider, and an already-authed OpenAI user would otherwise skip onboarding
+/// and never see the cyrus setup flow. We only force the flow when the cyrus
+/// option is actually offerable.
+fn cyrus_force_onboarding(config: &Config) -> bool {
+    std::env::var_os("CYRUS_WRAPPED").is_some()
+        && config.model_provider_id != "shadow"
+        && crate::onboarding::onboarding_screen::detect_hannah_montana_provider(config).is_some()
+}
+
 fn should_show_onboarding(
     login_status: LoginStatus,
     config: &Config,
     show_trust_screen: bool,
 ) -> bool {
     if show_trust_screen {
+        return true;
+    }
+
+    if cyrus_force_onboarding(config) {
         return true;
     }
 
@@ -2097,6 +2120,76 @@ mod tests {
             .codex_home(temp_dir.path().to_path_buf())
             .build()
             .await
+    }
+
+    /// Configure `config` so the cyrus (Hannah Montana) option is offerable
+    /// without depending on a `cyrus` binary being on PATH: register a `shadow`
+    /// provider that does not require OpenAI auth, while leaving the active
+    /// provider id as something other than `shadow`.
+    fn make_cyrus_offerable(config: &mut Config) {
+        config.model_providers.insert(
+            "shadow".to_string(),
+            codex_model_provider_info::ModelProviderInfo {
+                name: "shadow".to_string(),
+                requires_openai_auth: false,
+                ..Default::default()
+            },
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn cyrus_force_onboarding_true_when_wrapped_and_not_shadow() {
+        let temp_dir = TempDir::new().unwrap();
+        let mut config = build_config(&temp_dir).await.unwrap();
+        make_cyrus_offerable(&mut config);
+        assert_ne!(config.model_provider_id, "shadow");
+
+        // SAFETY: serialized via #[serial]; cleaned up before returning.
+        unsafe { std::env::set_var("CYRUS_WRAPPED", "1") };
+        let forced = cyrus_force_onboarding(&config);
+        let onboarding = should_show_onboarding(
+            LoginStatus::AuthMode(AppServerAuthMode::Chatgpt),
+            &config,
+            /*show_trust_screen*/ false,
+        );
+        unsafe { std::env::remove_var("CYRUS_WRAPPED") };
+
+        assert!(forced, "cyrus should force onboarding when wrapped and not on shadow");
+        assert!(
+            onboarding,
+            "onboarding must show even for an already-authed user under cyrus"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn cyrus_force_onboarding_false_when_provider_is_shadow() {
+        let temp_dir = TempDir::new().unwrap();
+        let mut config = build_config(&temp_dir).await.unwrap();
+        make_cyrus_offerable(&mut config);
+        config.model_provider_id = "shadow".to_string();
+
+        // SAFETY: serialized via #[serial]; cleaned up before returning.
+        unsafe { std::env::set_var("CYRUS_WRAPPED", "1") };
+        let forced = cyrus_force_onboarding(&config);
+        unsafe { std::env::remove_var("CYRUS_WRAPPED") };
+
+        assert!(!forced, "already set up (shadow) must not re-force onboarding");
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn cyrus_force_onboarding_false_when_env_unset() {
+        let temp_dir = TempDir::new().unwrap();
+        let mut config = build_config(&temp_dir).await.unwrap();
+        make_cyrus_offerable(&mut config);
+
+        // SAFETY: serialized via #[serial]; ensure the var is unset for plain codex.
+        unsafe { std::env::remove_var("CYRUS_WRAPPED") };
+        let forced = cyrus_force_onboarding(&config);
+
+        assert!(!forced, "plain codex (no CYRUS_WRAPPED) must not force onboarding");
     }
 
     fn write_session_rollout(
