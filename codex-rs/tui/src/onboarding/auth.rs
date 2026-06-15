@@ -566,7 +566,7 @@ impl AuthModeWidget {
                         idx,
                         option,
                         "cyrus (best of both worlds)",
-                        "Run codex on the plan you already pay for, without limit",
+                        "Run codex on the ChatGPT plan you already pay for",
                     ));
                 }
             }

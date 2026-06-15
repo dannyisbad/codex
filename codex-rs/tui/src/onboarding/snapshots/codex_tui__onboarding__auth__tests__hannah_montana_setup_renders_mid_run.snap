@@ -4,9 +4,9 @@ expression: terminal.backend()
 ---
   Setting up cyrus
 
-  ✓ Loading secrets — loaded
-  ⏳ Connecting Chrome
-    Opening tunnel
-    Starting stack
+  ✓ Preparing credentials — loaded
+  ⏳ Connecting to Chrome
+    Opening the public tunnel
+    Starting local servers
     Wiring the ChatGPT connector
-    Writing Codex config
+    Configuring codex

@@ -757,6 +757,23 @@ impl App {
             }
             AppEvent::UpdateModel(model) => {
                 self.chat_widget.set_model(&model);
+                // cyrus: the ChatGPT "Pro" lane (gpt-*-pro, o*-pro) does not
+                // expose custom MCP connector tools, so agentic/tool tasks
+                // silently fail on it (the model reports it has no tools) even
+                // though reasoning works. Warn the moment it's picked, but only
+                // under cyrus (standalone codex hits the real API where Pro may
+                // support tools fine).
+                if std::env::var_os("CYRUS_WRAPPED").is_some()
+                    && model.to_ascii_lowercase().contains("pro")
+                {
+                    self.chat_widget.add_info_message(
+                        "Heads up: the ChatGPT Pro lane doesn't expose connector tools, so tool / \
+                         agentic tasks may not work on this model (reasoning-only). Switch to a \
+                         Thinking/Instant model for tool work."
+                            .to_string(),
+                        None,
+                    );
+                }
                 self.sync_active_thread_model_setting(app_server, model)
                     .await;
                 self.sync_active_thread_service_tier_to_cached_session()

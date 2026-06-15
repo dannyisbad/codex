@@ -34,12 +34,14 @@ use super::SignInState;
 /// The ordered setup steps reported by `cyrus setup --json`. Keys match the
 /// `step` field of the JSON event contract.
 const SETUP_STEPS: [(&str, &str); 6] = [
-    ("secrets", "Loading secrets"),
-    ("chrome", "Connecting Chrome"),
-    ("tunnel", "Opening tunnel"),
-    ("stack", "Starting stack"),
+    ("secrets", "Preparing credentials"),
+    ("chrome", "Connecting to Chrome"),
+    ("tunnel", "Opening the public tunnel"),
+    ("stack", "Starting local servers"),
     ("connector", "Wiring the ChatGPT connector"),
-    ("codex_config", "Writing Codex config"),
+    // Not "Writing config": the provider is injected at launch, nothing is
+    // written to the user's codex config (the engine cleans stale blocks).
+    ("codex_config", "Configuring codex"),
 ];
 
 /// How `cyrus` should expose itself to the user, chosen via the tunnel picker.
@@ -94,6 +96,8 @@ pub(crate) struct HannahMontanaSetupState {
     pub(crate) needs_user_action: Option<String>,
     /// Terminal error; when set the run has failed and can be retried.
     pub(crate) error: Option<String>,
+    /// Actionable hint shown alongside `error`, when the engine supplied one.
+    pub(crate) remedy: Option<String>,
 }
 
 impl HannahMontanaSetupState {
@@ -112,6 +116,7 @@ impl HannahMontanaSetupState {
             steps,
             needs_user_action: None,
             error: None,
+            remedy: None,
         }
     }
 
@@ -164,6 +169,10 @@ pub(crate) enum SetupEvent {
     },
     Error {
         message: String,
+        /// Actionable hint for the failed step (engine `Step::remedy()`); absent
+        /// for front-end-internal errors (e.g. failing to spawn `cyrus`).
+        #[serde(default)]
+        remedy: Option<String>,
     },
 }
 
@@ -213,9 +222,10 @@ pub(crate) fn reduce(state: &mut HannahMontanaSetupState, event: SetupEvent) -> 
             state.error = None;
             ReduceOutcome::Completed
         }
-        SetupEvent::Error { message } => {
+        SetupEvent::Error { message, remedy } => {
             state.needs_user_action = None;
             state.error = Some(message);
+            state.remedy = remedy;
             ReduceOutcome::Failed
         }
     }
@@ -435,6 +445,7 @@ fn finish_with_error(
     }
     state.needs_user_action = None;
     state.error = Some(message);
+    state.remedy = None; // front-end-internal error: its message is self-contained.
     drop(guard);
     request_frame.schedule_frame();
 }
@@ -480,6 +491,12 @@ pub(super) fn render_hannah_montana_setup(
     if let Some(error) = &state.error {
         lines.push("".into());
         lines.push(Line::from(format!("  {error}")).fg(Color::Red));
+        if let Some(remedy) = &state.remedy
+            && !remedy.is_empty()
+        {
+            lines.push("".into());
+            lines.push(Line::from(vec!["  Try: ".dim(), remedy.clone().into()]));
+        }
         lines.push("".into());
         lines.push(Line::from(vec![
             "  Press ".dim(),
@@ -547,6 +564,14 @@ mod tests {
             parse(r#"{"event":"error","message":"boom"}"#),
             SetupEvent::Error {
                 message: "boom".to_string(),
+                remedy: None,
+            }
+        );
+        assert_eq!(
+            parse(r#"{"event":"error","message":"boom","remedy":"free the port"}"#),
+            SetupEvent::Error {
+                message: "boom".to_string(),
+                remedy: Some("free the port".to_string()),
             }
         );
     }
