@@ -471,6 +471,12 @@ pub(super) fn render_hannah_montana_setup(
             StepStatus::Pending => (" ", Style::default().add_modifier(ratatui::style::Modifier::DIM)),
         };
         let mut text = format!("{marker} {label}", label = step.label);
+        // The connector step does the slow remote work (quick-tunnel edge
+        // propagation + ChatGPT connector registration). Reassure the user while
+        // it's in flight; drop the hint once it's Done so a ✓ line stays clean.
+        if step.key == "connector" && step.status == StepStatus::Running {
+            text.push_str("... this may take up to 5 minutes");
+        }
         if let Some(detail) = &step.detail
             && !detail.is_empty()
         {
